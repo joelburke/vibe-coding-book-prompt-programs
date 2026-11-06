@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lit Cube</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    background: #0f1115; color: #e6e6e6; font: 15px/1.4 system-ui, -apple-system, sans-serif;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 16px 0 8px; }
+  canvas { width: min(92vw, 520px); aspect-ratio: 1; border-radius: 12px; background: #161a21; touch-action: none; }
+  .panel { width: min(92vw, 520px); margin: 14px 0 24px; display: grid; gap: 12px; }
+  .group { background: #161a21; border-radius: 12px; padding: 12px 14px; display: grid; gap: 10px; }
+  .group h2 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #8b93a1; }
+  .row { display: grid; grid-template-columns: 64px 1fr 48px; align-items: center; gap: 10px; }
+  .row label { color: #b9c0cc; }
+  .row output { text-align: right; font-variant-numeric: tabular-nums; color: #8b93a1; }
+  input[type=range] { width: 100%; accent-color: #6aa3ff; }
+  input[type=color] { width: 100%; height: 32px; border: none; background: none; padding: 0; }
+  button { justify-self: start; background: #252b36; color: #e6e6e6; border: 0; border-radius: 8px; padding: 8px 14px; font: inherit; cursor: pointer; }
+  button:hover { background: #2f3745; }
+  .swatches { display: flex; gap: 8px; }
+  .swatches button { width: 28px; height: 28px; padding: 0; border-radius: 50%; border: 2px solid #2a303b; }
+</style>
+</head>
+<body>
+<h1>Cube with a colored light</h1>
+<canvas id="gl"></canvas>
+
+<div class="panel">
+  <div class="group">
+    <h2>Cube orientation</h2>
+    <div class="row"><label for="rx">Pitch X</label><input id="rx" type="range" min="-180" max="180" value="25"><output id="rxv"></output></div>
+    <div class="row"><label for="ry">Yaw Y</label><input id="ry" type="range" min="-180" max="180" value="-35"><output id="ryv"></output></div>
+    <div class="row"><label for="rz">Roll Z</label><input id="rz" type="range" min="-180" max="180" value="0"><output id="rzv"></output></div>
+    <button id="reset">Reset orientation</button>
+  </div>
+  <div class="group">
+    <h2>Light</h2>
+    <div class="row"><label for="lc">Color</label><input id="lc" type="color" value="#ff8a3d"><output></output></div>
+    <div class="swatches" id="swatches"></div>
+    <div class="row"><label for="la">Orbit</label><input id="la" type="range" min="-180" max="180" value="40"><output id="lav"></output></div>
+    <div class="row"><label for="lh">Height</label><input id="lh" type="range" min="-5" max="5" step="0.1" value="2.5"><output id="lhv"></output></div>
+    <div class="row"><label for="li">Intensity</label><input id="li" type="range" min="0" max="2" step="0.05" value="1.2"><output id="liv"></output></div>
+  </div>
+</div>
+
+<script>
+// ---------- WebGL setup ----------
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl');
+if (!gl) { document.body.insertAdjacentHTML('beforeend', '<p>WebGL is not available in this browser.</p>'); throw new Error('no webgl'); }
+
+const vsSrc = `
+attribute vec3 aPos;
+attribute vec3 aNormal;
+uniform mat4 uModel, uView, uProj;
+varying vec3 vNormal, vWorldPos;
+void main() {
+  vec4 world = uModel * vec4(aPos, 1.0);
+  vWorldPos = world.xyz;
+  vNormal = mat3(uModel) * aNormal;   // pure rotation, so no inverse-transpose needed
+  gl_Position = uProj * uView * world;
+}`;
+
+// Blinn-Phong shading with a colored point light
+const fsSrc = `
+precision mediump float;
+varying vec3 vNormal, vWorldPos;
+uniform vec3 uLightPos, uLightColor, uEye, uBaseColor;
+uniform float uIntensity;
+uniform bool uUnlit;
+void main() {
+  if (uUnlit) { gl_FragColor = vec4(uLightColor, 1.0); return; }
+  vec3 N = normalize(vNormal);
+  vec3 L = normalize(uLightPos - vWorldPos);
+  vec3 V = normalize(uEye - vWorldPos);
+  vec3 H = normalize(L + V);
+  float diff = max(dot(N, L), 0.0);
+  float spec = pow(max(dot(N, H), 0.0), 48.0) * step(0.0, dot(N, L));
+  vec3 ambient = 0.12 * uBaseColor;
+  vec3 color = ambient
+             + uIntensity * uLightColor * (diff * uBaseColor + 0.6 * spec);
+  gl_FragColor = vec4(pow(color, vec3(1.0/2.2)), 1.0);   // gamma correct
+}`;
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, vsSrc));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fsSrc));
+gl.linkProgram(prog);
+gl.useProgram(prog);
+
+const loc = n => gl.getUniformLocation(prog, n);
+const U = {
+  model: loc('uModel'), view: loc('uView'), proj: loc('uProj'),
+  lightPos: loc('uLightPos'), lightColor: loc('uLightColor'), eye: loc('uEye'),
+  base: loc('uBaseColor'), intensity: loc('uIntensity'), unlit: loc('uUnlit')
+};
+
+// ---------- Geometry ----------
+// Cube: 6 faces x 4 vertices, each with its own normal for flat shading
+function cubeMesh(s) {
+  const faces = [
+    [[0,0,1],  [[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]]],
+    [[0,0,-1], [[1,-1,-1],[-1,-1,-1],[-1,1,-1],[1,1,-1]]],
+    [[1,0,0],  [[1,-1,1],[1,-1,-1],[1,1,-1],[1,1,1]]],
+    [[-1,0,0], [[-1,-1,-1],[-1,-1,1],[-1,1,1],[-1,1,-1]]],
+    [[0,1,0],  [[-1,1,1],[1,1,1],[1,1,-1],[-1,1,-1]]],
+    [[0,-1,0], [[-1,-1,-1],[1,-1,-1],[1,-1,1],[-1,-1,1]]],
+  ];
+  const pos = [], nor = [], idx = [];
+  faces.forEach(([n, vs], f) => {
+    vs.forEach(v => { pos.push(v[0]*s, v[1]*s, v[2]*s); nor.push(...n); });
+    const o = f * 4; idx.push(o, o+1, o+2, o, o+2, o+3);
+  });
+  return { pos, nor, idx };
+}
+
+function makeMesh(m) {
+  const pb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, pb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(m.pos), gl.STATIC_DRAW);
+  const nb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, nb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(m.nor), gl.STATIC_DRAW);
+  const ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(m.idx), gl.STATIC_DRAW);
+  return { pb, nb, ib, count: m.idx.length };
+}
+const cube = makeMesh(cubeMesh(1));
+const bulb = makeMesh(cubeMesh(0.08));   // small marker showing where the light is
+
+const aPos = gl.getAttribLocation(prog, 'aPos');
+const aNormal = gl.getAttribLocation(prog, 'aNormal');
+function bindMesh(m) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, m.pb); gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, m.nb); gl.enableVertexAttribArray(aNormal); gl.vertexAttribPointer(aNormal, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.ib);
+}
+
+// ---------- Minimal 4x4 matrix math (column-major) ----------
+const M = {
+  identity: () => [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
+  mul(a, b) {
+    const r = new Array(16);
+    for (let c = 0; c < 4; c++) for (let rI = 0; rI < 4; rI++) {
+      let s = 0; for (let k = 0; k < 4; k++) s += a[k*4 + rI] * b[c*4 + k];
+      r[c*4 + rI] = s;
+    }
+    return r;
+  },
+  rotX(t) { const c = Math.cos(t), s = Math.sin(t); return [1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]; },
+  rotY(t) { const c = Math.cos(t), s = Math.sin(t); return [c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]; },
+  rotZ(t) { const c = Math.cos(t), s = Math.sin(t); return [c,s,0,0, -s,c,0,0, 0,0,1,0, 0,0,0,1]; },
+  translate(x, y, z) { return [1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1]; },
+  perspective(fovy, aspect, near, far) {
+    const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
+    return [f/aspect,0,0,0, 0,f,0,0, 0,0,(far+near)*nf,-1, 0,0,2*far*near*nf,0];
+  },
+};
+
+// ---------- Controls ----------
+const $ = id => document.getElementById(id);
+const deg = d => d * Math.PI / 180;
+const hexToRgb = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16) / 255);
+
+const sliders = [['rx','°'], ['ry','°'], ['rz','°'], ['la','°'], ['lh',''], ['li','']];
+sliders.forEach(([id, unit]) => {
+  const update = () => { $(id + 'v').textContent = $(id).value + unit; draw(); };
+  $(id).addEventListener('input', update);
+  $(id + 'v').textContent = $(id).value + unit;
+});
+$('lc').addEventListener('input', draw);
+
+const defaults = { rx: 25, ry: -35, rz: 0 };
+$('reset').addEventListener('click', () => {
+  for (const k in defaults) { $(k).value = defaults[k]; $(k + 'v').textContent = defaults[k] + '°'; }
+  draw();
+});
+
+['#ff8a3d', '#ff3b5c', '#3dff8a', '#3d9bff', '#b23dff', '#ffffff'].forEach(c => {
+  const b = document.createElement('button');
+  b.style.background = c; b.title = c; b.setAttribute('aria-label', 'Light color ' + c);
+  b.addEventListener('click', () => { $('lc').value = c; draw(); });
+  $('swatches').appendChild(b);
+});
+
+// Drag on the canvas also rotates the cube (updates the sliders)
+let drag = null;
+canvas.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointerup', () => drag = null);
+canvas.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const wrap = v => ((v + 180) % 360 + 360) % 360 - 180;
+  $('ry').value = wrap(+$('ry').value + (e.clientX - drag.x) * 0.6);
+  $('rx').value = wrap(+$('rx').value + (e.clientY - drag.y) * 0.6);
+  $('ryv').textContent = $('ry').value + '°'; $('rxv').textContent = $('rx').value + '°';
+  drag = { x: e.clientX, y: e.clientY };
+  draw();
+});
+
+// ---------- Render ----------
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  gl.viewport(0, 0, w, h);
+}
+
+let pending = false;
+function draw() {
+  if (pending) return;
+  pending = true;
+  requestAnimationFrame(render);
+}
+
+function render() {
+  pending = false;
+  resize();
+  gl.enable(gl.DEPTH_TEST);
+  gl.clearColor(0.086, 0.102, 0.129, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  const eye = [0, 0, 6];
+  gl.uniformMatrix4fv(U.proj, false, M.perspective(deg(45), canvas.width / canvas.height, 0.1, 100));
+  gl.uniformMatrix4fv(U.view, false, M.translate(-eye[0], -eye[1], -eye[2]));
+  gl.uniform3fv(U.eye, eye);
+
+  // Light orbits the cube horizontally at a chosen height
+  const a = deg(+$('la').value), r = 3.2;
+  const lightPos = [r * Math.sin(a), +$('lh').value, r * Math.cos(a)];
+  const lightColor = hexToRgb($('lc').value);
+  gl.uniform3fv(U.lightPos, lightPos);
+  gl.uniform3fv(U.lightColor, lightColor);
+  gl.uniform1f(U.intensity, +$('li').value);
+
+  // Cube: rotation order Z, then Y, then X  (model = Rx * Ry * Rz)
+  const model = M.mul(M.rotX(deg(+$('rx').value)), M.mul(M.rotY(deg(+$('ry').value)), M.rotZ(deg(+$('rz').value))));
+  gl.uniformMatrix4fv(U.model, false, model);
+  gl.uniform3fv(U.base, [0.85, 0.85, 0.88]);
+  gl.uniform1i(U.unlit, 0);
+  bindMesh(cube);
+  gl.drawElements(gl.TRIANGLES, cube.count, gl.UNSIGNED_SHORT, 0);
+
+  // Light marker
+  gl.uniformMatrix4fv(U.model, false, M.translate(...lightPos));
+  gl.uniform1i(U.unlit, 1);
+  bindMesh(bulb);
+  gl.drawElements(gl.TRIANGLES, bulb.count, gl.UNSIGNED_SHORT, 0);
+}
+
+window.addEventListener('resize', draw);
+draw();
+</script>
+</body>
+</html>

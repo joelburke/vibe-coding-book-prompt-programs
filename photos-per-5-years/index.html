@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photographs Taken per Year, 1975–2025</title>
+<style>
+  /* Standalone stand-ins for the theme variables the chat Visualizer provides */
+  :root { --text-secondary: #5f5e5a; --bg: #ffffff; --text: #1f1e1c; color-scheme: light dark; }
+  @media (prefers-color-scheme: dark) { :root { --text-secondary: #a8a69f; --bg: #1a1a18; --text: #ecebe6; } }
+  body { margin: 0; padding: 24px; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 16px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+  .note { margin-top: 16px; font-size: 12px; color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<main>
+<h1>Estimated photographs taken worldwide per year</h1>
+
+<h2 class="sr-only">Bar chart of estimated photos taken worldwide per year, every five years from 1975 to 2025, rising from about 15 billion to about 2.1 trillion.</h2>
+<div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 8px;font-size:12px;color:var(--text-secondary);">
+<span>Photos per year, billions (est.)</span>
+<button id="tog" style="font-size:12px;padding:4px 10px;">Log scale</button>
+</div>
+<div style="position:relative;width:100%;height:320px;">
+<canvas id="c" role="img" aria-label="Estimated photos taken per year: 1975 15B, 1980 25B, 1985 40B, 1990 57B, 1995 70B, 2000 86B, 2005 150B, 2010 350B, 2015 1000B, 2020 1150B, 2025 2100B">1975 15B; 1980 25B; 1985 40B; 1990 57B; 1995 70B; 2000 86B; 2005 150B; 2010 350B; 2015 1T; 2020 1.15T; 2025 2.1T.</canvas>
+</div>
+<div style="display:flex;gap:16px;margin-top:8px;font-size:12px;color:var(--text-secondary);">
+<span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:#b4b2a9;"></span>Mostly film</span>
+<span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:#2a78d6;"></span>Mostly digital / smartphone</span>
+</div>
+
+<p class="note">2015–2025 figures are based on published estimates (Photutorial, 16best, Statista/InfoTrends). 1975–2010 figures are rough reconstructions and should be treated as approximate.</p>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const dark=matchMedia('(prefers-color-scheme: dark)').matches||document.documentElement.dataset.mode==='dark';
+const muted='#898781',grid=dark?'#2c2c2a':'#e1e0d9';
+const labels=['1975','1980','1985','1990','1995','2000','2005','2010','2015','2020','2025'];
+const data=[15,25,40,57,70,86,150,350,1000,1150,2100];
+const colors=data.map((v,i)=>i<6?(dark?'#5f5e5a':'#b4b2a9'):(dark?'#3987e5':'#2a78d6'));
+const fmt=v=>v>=1000?(v/1000).toFixed(v%1000?2:0).replace(/0$/,'')+'T':v+'B';
+const ch=new Chart(document.getElementById('c'),{type:'bar',data:{labels,datasets:[{data,backgroundColor:colors,borderRadius:{topLeft:4,topRight:4},borderSkipped:'bottom',maxBarThickness:24}]},
+options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'~'+fmt(c.raw)+' photos'}}},
+scales:{x:{grid:{display:false},ticks:{color:muted,autoSkip:false,maxRotation:45}},y:{type:'linear',grid:{color:grid},border:{display:false},ticks:{color:muted,callback:v=>fmt(v)}}}}});
+let log=false;
+document.getElementById('tog').onclick=function(){log=!log;ch.options.scales.y.type=log?'logarithmic':'linear';this.textContent=log?'Linear scale':'Log scale';ch.update();};
+</script>
+</body>
+</html>
